@@ -1,0 +1,149 @@
+# IT Team Automation - Configuration
+# Copy this to ~/.claude/skills/it-team/config.yaml after installation
+# All fields with "your-*" values must be filled in before use.
+
+# ─────────────────────────────────────────────
+# GitHub Repository
+# ─────────────────────────────────────────────
+repository:
+  owner: "your-github-username"   # GitHub user or org that owns the repo
+  name: "your-repo-name"          # Repository name (not the full URL)
+  # Example:
+  #   owner: "brm"
+  #   name: "my-project"
+
+# ─────────────────────────────────────────────
+# Issue Filtering
+# ─────────────────────────────────────────────
+issues:
+  # GitHub label that marks an issue as ready for automation.
+  # Only issues with this label are picked up each session.
+  ready_label: "ready"
+
+  # Optional: also require one of these labels (AND logic with ready_label).
+  # additional_labels: ["bug", "enhancement"]
+
+  # Optional: skip issues that carry any of these labels.
+  # exclude_labels: ["wip", "blocked", "needs-discussion"]
+
+# ─────────────────────────────────────────────
+# Workflow Limits  (safety caps — do not raise without understanding the risks)
+# ─────────────────────────────────────────────
+limits:
+  # Maximum number of issues processed in a single session.
+  # Prevents runaway processing if the label is applied en-masse.
+  max_issues: 20
+
+  # Maximum dev agents running in parallel.
+  # Higher values speed things up but increase conflict risk and API usage.
+  max_parallel_agents: 10
+
+  # Issues that mention more files than this are quarantined.
+  # Protects against issues that enumerate the entire repo as scope.
+  max_files_per_issue: 50
+
+  # Hard wall on total session duration (hours).
+  # The session checkpoints state and stops cleanly at this limit.
+  session_timeout_hours: 2
+
+  # Per-agent timeout (minutes). Agents that exceed this are killed and logged.
+  agent_timeout_minutes: 30
+
+# ─────────────────────────────────────────────
+# File Filtering
+# ─────────────────────────────────────────────
+files:
+  # Agents may only read or write files with these extensions.
+  # Add extensions your project uses; remove ones that don't apply.
+  allowed_extensions:
+    - .py
+    - .js
+    - .ts
+    - .jsx
+    - .tsx
+    - .md
+    - .yaml
+    - .yml
+    - .json
+    - .txt
+    - .css
+    - .html
+
+  # These directories are off-limits for all agents, regardless of what an
+  # issue requests. Paths are matched as prefixes relative to the repo root.
+  forbidden_directories:
+    - .git/
+    - .github/workflows/   # Modifying CI/CD is never automated
+    - node_modules/
+    - venv/
+    - .venv/
+    - __pycache__/
+    - dist/
+    - build/
+
+# ─────────────────────────────────────────────
+# Branch Naming
+# ─────────────────────────────────────────────
+branches:
+  # All automated branches are created with this prefix.
+  # Useful for branch protection rules (e.g. protect everything NOT matching "feature/it-session-*").
+  prefix: "feature/it-session-"
+
+  # The branch that pull requests are opened against.
+  base: "main"
+
+# ─────────────────────────────────────────────
+# Security
+# ─────────────────────────────────────────────
+security:
+  # strict  — any pattern match from injection-patterns.md quarantines the issue.
+  # lenient — only obvious/high-confidence patterns quarantine; ambiguous ones
+  #           are flagged for manual review but not automatically blocked.
+  # Recommendation: keep "strict" unless you have a high false-positive rate.
+  mode: "strict"
+
+  # If an issue body contains text that looks like an API key, token, or
+  # private key, quarantine it and surface it to the user before proceeding.
+  quarantine_secrets: true
+
+  # When true, the session pauses and waits for explicit "yes" before
+  # opening any pull request. Useful during initial rollout.
+  require_manual_approval: false
+
+# ─────────────────────────────────────────────
+# Notifications
+# ─────────────────────────────────────────────
+notifications:
+  # Include quarantined issues in the end-of-session summary.
+  # Always recommended — you want to know what was blocked and why.
+  show_quarantined: true
+
+  # Print the file-to-agent assignments the architect produces.
+  # Helpful for auditing what the system decided to touch.
+  show_file_assignments: true
+
+  # minimal  — errors and final summary only
+  # normal   — progress updates, quarantine alerts, PR links
+  # detailed — full per-agent reasoning and file diffs before commit
+  verbosity: "normal"
+
+# ─────────────────────────────────────────────
+# Advanced
+# ─────────────────────────────────────────────
+advanced:
+  # Session data is written to {PROJECT_ROOT}/.it-sessions/{session-id}/
+  # That directory is added to .gitignore automatically on first run.
+  # It is NOT configurable to a path outside the project — that would
+  # contradict the "never work outside PROJECT_ROOT" security constraint.
+
+  # When false, sessions older than cleanup_after_days are removed automatically.
+  # Set to true to keep all session data for debugging.
+  keep_session_data: false
+
+  # How many days to retain session directories before auto-cleanup.
+  # Ignored when keep_session_data is true.
+  cleanup_after_days: 7
+
+  # When true, the full plan is generated and shown but no files are
+  # committed and no PRs are opened. Use to preview what a session would do.
+  dry_run: false
