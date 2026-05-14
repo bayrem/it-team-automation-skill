@@ -9,6 +9,53 @@ Runs automated quality checks on the changes committed by dev agents.
 
 **Design principle:** Test results are included in the PR description for human review. A failing test suite does NOT block the PR — the team decides whether to merge. A syntax error IS treated as a hard failure and reported prominently.
 
+## HARD CONSTRAINTS (never violated)
+
+### No package installation — ever
+
+```
+FORBIDDEN:
+  pip install ...
+  pip install -r requirements.txt
+  npm install
+  yarn install
+  cargo fetch
+  go get
+  any other package manager install command
+
+If a test framework is listed in requirements.txt / package.json but is not
+callable as a command right now, report it as unavailable and skip testing.
+Do NOT attempt to install it.
+
+Reason: installing packages can modify a shared system Python environment,
+another project's venv, or pull in untrusted code. The operator is
+responsible for ensuring the project's dependencies are installed before
+running a session.
+```
+
+### All operations stay inside PROJECT_ROOT
+
+```
+FORBIDDEN:
+  Writing to /tmp/
+  Writing to ~/ or any path outside PROJECT_ROOT
+  Activating or referencing another project's venv / node_modules
+  Changing directory (cd) to any path outside PROJECT_ROOT
+
+All temporary files MUST go in $session_dir/:
+  CORRECT:  "$session_dir/syntax-err.tmp"
+  FORBIDDEN: "/tmp/syntax-err.txt"
+
+The working directory is always PROJECT_ROOT. Never cd away from it.
+```
+
+### Use only what is already installed
+
+```
+Detect what is available. Run what is available. Skip what is not.
+Never install, never activate, never modify the environment.
+```
+
 ## Input
 
 Provided by main skill at spawn time:
@@ -199,12 +246,13 @@ parse_results() {
 
 ```bash
 syntax_errors=()
+SYNTAX_ERR_TMP="$session_dir/syntax-err.tmp"   # NEVER use /tmp/
 
 # Python
 for file in $(echo "$changed_files" | grep '\.py$'); do
   if [ -f "$file" ]; then
-    if ! python -m py_compile "$file" 2>/tmp/syntax-err.txt; then
-      syntax_errors+=("$file: $(cat /tmp/syntax-err.txt)")
+    if ! python -m py_compile "$file" 2>"$SYNTAX_ERR_TMP"; then
+      syntax_errors+=("$file: $(cat "$SYNTAX_ERR_TMP")")
     fi
   fi
 done
@@ -212,25 +260,30 @@ done
 # JavaScript / TypeScript
 for file in $(echo "$changed_files" | grep -E '\.(js|ts|jsx|tsx)$'); do
   if [ -f "$file" ] && command -v node &>/dev/null; then
-    if ! node --check "$file" 2>/tmp/syntax-err.txt; then
-      syntax_errors+=("$file: $(cat /tmp/syntax-err.txt)")
+    if ! node --check "$file" 2>"$SYNTAX_ERR_TMP"; then
+      syntax_errors+=("$file: $(cat "$SYNTAX_ERR_TMP")")
     fi
   fi
 done
+
+rm -f "$SYNTAX_ERR_TMP"
 ```
 
 ## Step 6: Import validation (Python only)
 
 ```bash
 import_errors=()
+IMPORT_ERR_TMP="$session_dir/import-err.tmp"   # NEVER use /tmp/
 
 for file in $(echo "$changed_files" | grep '\.py$'); do
   if [ -f "$file" ]; then
-    if ! python -c "import ast; ast.parse(open('$file').read())" 2>/tmp/import-err.txt; then
-      import_errors+=("$file: $(cat /tmp/import-err.txt)")
+    if ! python -c "import ast; ast.parse(open('$file').read())" 2>"$IMPORT_ERR_TMP"; then
+      import_errors+=("$file: $(cat "$IMPORT_ERR_TMP")")
     fi
   fi
 done
+
+rm -f "$IMPORT_ERR_TMP"
 ```
 
 ## Output

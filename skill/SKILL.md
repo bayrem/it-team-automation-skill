@@ -64,6 +64,39 @@ Loaded from config — hard caps that cannot be exceeded mid-session:
 | Session timeout | `limits.session_timeout_hours` |
 | Agent timeout | `limits.agent_timeout_minutes` |
 
+### 5. Environment Isolation
+
+**This session exists in one project. It does not touch anything outside it.**
+
+```
+FORBIDDEN — all agents, all phases:
+
+  Installing packages:
+    pip install ...
+    npm install / yarn install / pnpm install
+    cargo fetch / go get / gem install
+    Any package manager install command
+
+  Touching other projects:
+    Reading or writing files in sibling project directories
+    Activating another project's venv or node_modules
+    cd-ing to any directory outside PROJECT_ROOT
+
+  Using /tmp/ or system temp dirs for any purpose:
+    All temp files go in $SESSION_DIR/ (inside PROJECT_ROOT)
+    CORRECT:  $SESSION_DIR/scratch.tmp
+    FORBIDDEN: /tmp/anything
+
+RULE: If a dependency is missing and a test or tool cannot run,
+      report it as unavailable and skip — never install it.
+      The operator installs dependencies; agents only use what exists.
+```
+
+**If any agent detects it has taken an action outside PROJECT_ROOT:**
+1. Stop immediately
+2. Report the action taken and the path affected
+3. Do not continue the session — surface to user for review
+
 ---
 
 ## Configuration
