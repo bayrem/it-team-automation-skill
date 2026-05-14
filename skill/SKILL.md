@@ -121,7 +121,7 @@ Then edit it with your repository details and run again.
 
 ```
 Phase 0: Issue Screening     ← SECURITY GATE (quarantine suspicious issues)
-Phase 1: Load Screening Results ← Read pre-screened clean/quarantine lists
+Phase 1: Load & Prioritise     ← PM agent reads pre-screened lists and prioritises
 Phase 2: Architecture        ← File assignments with path validation
 Phase 3: Branch Creation     ← Create feature branch from base
 Phase 4: Implementation      ← Parallel dev agents (clean issues only)
@@ -420,15 +420,33 @@ LOG: "Pre-LLM screening complete. Results in ${PARSING_DIR}/"
 
 ---
 
-## Phase 1: Load Screening Results
+## Phase 1: Load & Prioritise Screening Results
 
 ### 1a. Read pre-screened issue lists
 
-```
-CLEAN_LIST      = read {PARSING_DIR}/clean_issues.json
-QUARANTINE_LIST = read {PARSING_DIR}/quarantine_issues.json
+Spawn **pm-agent** (foreground) with:
 
-LOG: "Loaded {len(CLEAN_LIST)} clean, {len(QUARANTINE_LIST)} quarantined issues"
+```
+Task:
+  Read {PARSING_DIR}/clean_issues.json ONLY.
+  Do not fetch from GitHub — screening has already run.
+  Do not read quarantine_issues.json — quarantined issues are for human review only.
+
+  For the clean issues:
+    - Review each issue's title and body
+    - Order by priority: critical bugs and blockers first, then features, then cosmetic/docs
+    - Return the prioritised list
+
+  Output:
+    CLEAN_LIST = prioritised list from clean_issues.json
+
+  Do not modify issue content.
+```
+
+Read quarantine count for the user summary (orchestrator only — no agent):
+```
+QUARANTINE_LIST = read {PARSING_DIR}/quarantine_issues.json
+                  (number + reason only — for display to user, not passed to any agent)
 ```
 
 ### 1b. Apply session limit
@@ -436,7 +454,7 @@ LOG: "Loaded {len(CLEAN_LIST)} clean, {len(QUARANTINE_LIST)} quarantined issues"
 ```
 if len(CLEAN_LIST) > config.limits.max_issues:
   WARN: "{len(CLEAN_LIST)} clean issues found, limit is {max_issues}. Processing first {max_issues} only."
-  CLEAN_LIST = CLEAN_LIST[:config.limits.max_issues]
+  CLEAN_LIST = CLEAN_LIST[:config.limits.max_issues]  (preserves priority order)
 ```
 
 ### 1c. Show user and confirm
