@@ -49,7 +49,8 @@ mkdir -p ~/.claude/skills/it-team ~/.claude/agents
 cp -r skill/* ~/.claude/skills/it-team/
 cp agents/* ~/.claude/agents/
 cp skill/config.yaml ~/.claude/skills/it-team/config.yaml
-nano ~/.claude/skills/it-team/config.yaml   # set owner + repo name
+# Optional: open config.yaml to adjust limits, security mode, or verbosity
+# Repository owner/name are auto-detected from the project's git remote — no manual entry needed
 ```
 
 Then, in your target project:
