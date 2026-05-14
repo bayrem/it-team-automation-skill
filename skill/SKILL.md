@@ -445,8 +445,8 @@ Task:
 
 Read quarantine count for the user summary (orchestrator only — no agent):
 ```
-QUARANTINE_LIST = read {PARSING_DIR}/quarantine_issues.json
-                  (number + reason only — for display to user, not passed to any agent)
+QUARANTINE_COUNT = jq 'length' {PARSING_DIR}/quarantine_issues.json
+# Do not read the file contents. Count only.
 ```
 
 ### 1b. Apply session limit
@@ -460,15 +460,12 @@ if len(CLEAN_LIST) > config.limits.max_issues:
 ### 1c. Show user and confirm
 
 ```
-Found {len(CLEAN_LIST) + len(QUARANTINE_LIST)} issues labelled '{ready_label}'
+Found issues labelled '{ready_label}'
 ├─ Clean:       {clean_count}
-└─ Quarantined: {quarantined_count}
+└─ Quarantined: {quarantine_count}
 
-{if quarantined_count > 0:}
-⚠  Quarantined (skipped — manual review required):
-   {for each quarantined issue:}
-   • #{number}: {reason}
-   (issue content not shown — raw data was wiped before reaching this point)
+{if quarantine_count > 0:}
+⚠  {quarantine_count} issue(s) quarantined — check: .it-sessions/issue_parsing/quarantine_issues.json
 
 Processing {min(clean_count, max_issues)} clean issues. Continue? (yes/no)
 ```
@@ -478,12 +475,8 @@ Processing {min(clean_count, max_issues)} clean issues. Continue? (yes/no)
 ```
 No clean issues to process.
 
-{if quarantined_count > 0:}
-All {quarantined_count} issues were quarantined.
-Review them individually:
-  gh issue view {number}
-To implement manually:
-  claude "implement feature from issue {number}"
+{if quarantine_count > 0:}
+  {quarantine_count} issue(s) quarantined — check: .it-sessions/issue_parsing/quarantine_issues.json
 
 Session ended. No changes made.
 ```
@@ -790,11 +783,9 @@ PR_BODY:
   {for each unresolved finding:}
   - #{gh_issue} [{severity}] {file}:{line} — {summary}
 
-  {if quarantined_count > 0:}
+  {if quarantine_count > 0:}
   ## Quarantined Issues (Not Included)
-  {for each quarantined issue:}
-  - #{number}: {title}
-    Reason: {quarantine_reason}
+  {quarantine_count} issue(s) skipped — see .it-sessions/issue_parsing/quarantine_issues.json
 
 Command:
   gh pr create \
@@ -818,13 +809,8 @@ IT Team Session Complete — {SESSION_ID}
 ✓ Processed: {processed_count} issues
   {for each processed issue: • #{number} — {title}}
 
-{if quarantined_count > 0:}
-⚠  Quarantined: {quarantined_count} issues (not processed)
-  {for each quarantined issue:}
-  • #{number} — {title}
-    Reason: {quarantine_reason}
-    Review: gh issue view {number}
-    Manual: claude "implement feature from issue {number}"
+{if quarantine_count > 0:}
+⚠  Quarantined: {quarantine_count} issue(s) — check: .it-sessions/issue_parsing/quarantine_issues.json
 
 📊 Statistics
   Commits made:       {commit_count}
