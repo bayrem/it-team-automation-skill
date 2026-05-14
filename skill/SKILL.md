@@ -126,7 +126,7 @@ Phase 2: Architecture        ← File assignments with path validation
 Phase 3: Branch Creation     ← Create feature branch from base
 Phase 4: Implementation      ← Parallel dev agents (clean issues only)
 Phase 5: Quality Assurance   ← Run available test suites
-Phase 6: Code Review & PR    ← Review diffs, open pull request
+Phase 6: Code Review & Remediation ← Review diffs, fix critical issues, open pull request
 Phase 7: Final Report        ← Summary of processed + quarantined issues
 ```
 
@@ -191,6 +191,38 @@ if ! git diff-index --quiet HEAD --; then
 fi
 ```
 
+### 0b-1. Detect GitHub repository
+
+```bash
+REMOTE_URL=$(git remote get-url origin 2>/dev/null)
+
+if [ -z "$REMOTE_URL" ]; then
+  ERROR: No 'origin' remote configured. Add a GitHub remote before running.
+  exit 1
+fi
+
+# SSH format: git@github.com:owner/repo.git
+if echo "$REMOTE_URL" | grep -q "^git@github.com:"; then
+  GITHUB_OWNER=$(echo "$REMOTE_URL" | sed 's/git@github.com://;s/\/.*//')
+  GITHUB_REPO=$(echo "$REMOTE_URL" | sed 's/git@github.com:[^/]*\///;s/\.git$//')
+
+# HTTPS format: https://github.com/owner/repo.git
+elif echo "$REMOTE_URL" | grep -q "^https://github.com/"; then
+  GITHUB_OWNER=$(echo "$REMOTE_URL" | sed 's|https://github.com/||;s|/.*||')
+  GITHUB_REPO=$(echo "$REMOTE_URL" | sed 's|https://github.com/[^/]*/||;s|\.git$||')
+
+else
+  ERROR: Remote URL is not a recognised GitHub format.
+  Got: {REMOTE_URL}
+  Supported: git@github.com:owner/repo.git  or  https://github.com/owner/repo.git
+  exit 1
+fi
+
+LOG: "Detected repository: {GITHUB_OWNER}/{GITHUB_REPO}"
+```
+
+---
+
 ### 0c. Load injection patterns
 
 ```
@@ -213,7 +245,7 @@ Spawn **pm-agent** (foreground) with:
 
 ```
 Task: Fetch all issues labelled "{config.issues.ready_label}" from
-      {config.repository.owner}/{config.repository.name}
+      {GITHUB_OWNER}/{GITHUB_REPO}
 
 Command:
   gh issue list \
@@ -476,27 +508,115 @@ Output: {SESSION_DIR}/test-results.json
 
 ---
 
-## Phase 6: Code Review & PR
+## Phase 6: Code Review & Remediation Loop
 
-### Code review
+```
+REMEDIATION_ROUND = 0
+MAX_REMEDIATION_ROUNDS = 2
+```
+
+### 6a. Run code review
 
 ```
 changed_files = git diff --name-only {BASE_BRANCH}...{BRANCH_NAME}
 
 for each file in changed_files:
   Run: /py-code-reviewer {file}
-  Collect: issues flagged at CRITICAL or HIGH severity
+  Collect all findings by severity: CRITICAL, HIGH, MEDIUM, LOW
 
-If any CRITICAL issues:
-  For each critical issue:
-    Create follow-up GitHub issue:
-      gh issue create --title "Code review finding: {summary}" --body "{detail}"
-    Log: follow-up issue number
-
-Aggregate all review findings → {SESSION_DIR}/review-results.json
+Aggregate all findings → {SESSION_DIR}/review-results.json
 ```
 
-### Open pull request
+### 6b. Classify findings
+
+```
+If no CRITICAL or HIGH findings:
+  LOG: "Review passed — no critical or high severity issues found"
+  → Proceed to Phase 6e (open PR)
+
+FINDINGS = all CRITICAL and HIGH findings from review-results.json
+
+Spawn classification agent using PM + Architect joint reasoning:
+
+  PM lens for each finding:
+    - Does this block the sprint goal or any issue resolved this session?
+    - What is the user-facing risk if shipped as-is?
+
+  Architect lens for each finding:
+    - Which files need to change to fix it?
+    - How complex is the fix (simple patch vs. structural change)?
+    - Does it conflict with work already committed this session?
+
+  Output per finding:
+    {
+      "finding_id": "<file>:<line>:<severity>",
+      "severity": "CRITICAL" | "HIGH",
+      "summary": "<short description>",
+      "classification": "immediate" | "deferred",
+      "rationale": "<one-line explanation>",
+      "files_affected": ["<file path>", ...]
+    }
+
+Create a GitHub bug issue for EVERY finding (immediate and deferred):
+  gh issue create \
+    --title "Bug [{severity}]: {summary}" \
+    --body "**Severity:** {severity}\n**File:** {file}:{line}\n**Detail:** {detail}\n**Classification:** {immediate|deferred}\n**Rationale:** {rationale}\n**Session:** {SESSION_ID}" \
+    --label "bug"
+  Log created issue number
+
+Save all classifications → {SESSION_DIR}/review-classifications.json
+```
+
+### 6c. Remediate immediate findings
+
+```
+IMMEDIATE = [findings classified as "immediate"]
+
+If no immediate findings:
+  LOG: "No immediate findings — all deferred. Proceeding to PR."
+  → Proceed to Phase 6e (open PR)
+
+If REMEDIATION_ROUND >= MAX_REMEDIATION_ROUNDS:
+  → Proceed to Phase 6d (escalate unresolved)
+
+REMEDIATION_ROUND += 1
+LOG: "Starting remediation round {REMEDIATION_ROUND} / {MAX_REMEDIATION_ROUNDS}"
+
+Architect translates IMMEDIATE findings into work units:
+  Same format as Phase 2 output
+  Each work unit references the GH bug issue number as its issue source
+  Files come from each finding's files_affected
+  Group findings to minimise file conflicts between parallel agents
+
+Spawn dev-agents (BACKGROUND, same as Phase 4):
+  agent_id:     "remediation-r{REMEDIATION_ROUND}-{n}"
+  issues:       [GH bug issue numbers for this work unit]
+  files:        [files_affected for this work unit]
+  project_root: {PROJECT_ROOT}
+  session_dir:  {SESSION_DIR}
+  output_file:  {SESSION_DIR}/dev-results/remediation-r{REMEDIATION_ROUND}-{n}.json
+
+Wait for all remediation agents to complete.
+
+→ Return to Phase 6a (re-run full code review on all files changed since base branch)
+```
+
+### 6d. Escalate unresolved findings
+
+```
+UNRESOLVED = CRITICAL and HIGH findings still present after {MAX_REMEDIATION_ROUNDS} rounds
+
+⚠  ALERT: {count} finding(s) remain unresolved after {MAX_REMEDIATION_ROUNDS} remediation rounds.
+   These will be flagged in the PR. Manual review required before merging.
+
+{for each unresolved finding:}
+  • [{severity}] {file}:{line} — {summary}
+    GH Issue: #{issue_number}
+
+Log unresolved findings → {SESSION_DIR}/unresolved-findings.json
+```
+
+### 6e. Open pull request
 
 ```
 PR_TITLE = "IT Session {SESSION_ID} — {issue_count} issues"
@@ -514,7 +634,24 @@ PR_BODY:
   {test summary from QA agent}
 
   ## Code Review
-  {review summary — findings count by severity}
+
+  {if no CRITICAL or HIGH findings:}
+  ✓ Passed — no critical or high severity issues.
+
+  {if any immediate findings were resolved through remediation:}
+  ✓ Resolved in session ({REMEDIATION_ROUND} remediation round(s)):
+  {for each resolved finding:}
+  - #{gh_issue} [{severity}] {file}:{line} — {summary}
+
+  {if any deferred findings:}
+  ⚠ Deferred to subsequent sprint:
+  {for each deferred finding:}
+  - #{gh_issue} [{severity}] {file}:{line} — {summary}
+
+  {if any unresolved findings:}
+  🚨 Unresolved — manual review required before merging:
+  {for each unresolved finding:}
+  - #{gh_issue} [{severity}] {file}:{line} — {summary}
 
   {if quarantined_count > 0:}
   ## Quarantined Issues (Not Included)
@@ -563,6 +700,16 @@ IT Team Session Complete — {SESSION_ID}
 {if test_results.status != "no_tests_found":}
 🧪 Tests: {pass_count} passed / {fail_count} failed
 
+{if any review findings exist (immediate, deferred, or unresolved):}
+🔍 Code Review:
+  {if resolved_count > 0:}
+  ✓ {resolved_count} finding(s) resolved in {REMEDIATION_ROUND} remediation round(s)
+  {if deferred_count > 0:}
+  ⚠ {deferred_count} finding(s) deferred — GH issues created: {deferred_issue_numbers}
+  {if unresolved_count > 0:}
+  🚨 {unresolved_count} finding(s) unresolved — manual review required before merging
+     GH issues: {unresolved_issue_numbers}
+
 {if config.advanced.keep_session_data == false:}
 ℹ  Session data in .it-sessions/{SESSION_ID} will be auto-cleaned
    after {config.advanced.cleanup_after_days} days.
@@ -603,6 +750,10 @@ The current session is always kept until the next run (regardless of `keep_sessi
 | Dev agent failure | Log reason, ask user to continue or abort |
 | All dev agents failed | Abort session, preserve branch for inspection |
 | Tests fail | Include results in PR body, do not block PR |
+| Code review finds CRITICAL/HIGH | PM+Architect classify → create GH bugs → remediate immediate → re-review (max 2 rounds) → escalate unresolved to PR body and final report |
+| Remediation agents cannot fix after 2 rounds | Log unresolved in after-action report, alert user, open PR with 🚨 flag |
+| No `origin` remote found | Error message, exit immediately |
+| Remote URL not a GitHub format | Error message showing the detected URL, exit immediately |
 | PR creation fails | Print `gh pr create` command for manual retry |
 
 ---

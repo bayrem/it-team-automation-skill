@@ -4,13 +4,12 @@
 
 # ─────────────────────────────────────────────
 # GitHub Repository
+# Auto-detected from: git remote get-url origin
+# Supports SSH (git@github.com:owner/repo.git) and
+#             HTTPS (https://github.com/owner/repo.git)
+# No configuration needed — the skill always uses the repo
+# that the current project directory is tracking.
 # ─────────────────────────────────────────────
-repository:
-  owner: "your-github-username"   # GitHub user or org that owns the repo
-  name: "your-repo-name"          # Repository name (not the full URL)
-  # Example:
-  #   owner: "brm"
-  #   name: "my-project"
 
 # ─────────────────────────────────────────────
 # Issue Filtering
