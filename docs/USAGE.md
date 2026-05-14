@@ -17,7 +17,13 @@ sudo apt install gh
 # Authenticate
 gh auth login
 gh auth status   # confirm: ✓ Logged in to github.com
+
+# Install jq (required by the issue screening script)
+brew install jq        # macOS
+sudo apt install jq    # Ubuntu/Debian
 ```
+
+Your project must also have a git remote named `origin` pointing to GitHub — the skill auto-detects your repo owner and name from it. No manual config needed.
 
 ### 2. Install the skill
 
@@ -41,17 +47,14 @@ nano ~/.claude/skills/it-team/config.yaml
 
 ### 3. Configure
 
-Edit `~/.claude/skills/it-team/config.yaml` — the minimum required fields:
+Edit `~/.claude/skills/it-team/config.yaml` — all defaults are safe out of the box. The only field you may want to change:
 
 ```yaml
-repository:
-  owner: "your-github-username"   # ← change this
-  name: "your-repo-name"          # ← change this
-
 issues:
-  ready_label: "ready"            # label that marks issues as ready
+  ready_label: "ready"   # change if you use a different label
 
-# All other settings have safe defaults — review but don't change yet
+# Repository owner/name are auto-detected from your project's git remote.
+# No manual entry needed.
 ```
 
 ### 4. Label your issues
@@ -105,17 +108,19 @@ Type `yes` at each prompt to proceed.
 ### What you'll see — Issue screening
 
 ```
-Found 10 issues with label 'ready'
-├─ Clean:       8 issues
-└─ Quarantined: 2 issues
+Found issues with label 'ready'
+├─ Clean:       8
+└─ Quarantined: 2
 
-⚠  Quarantined (skipped — manual review required):
-   • #42: "Add OAuth feature"
-     Reason: Injection keyword detected — "ignore all previous instructions"
-   • #89: "Update config paths"
-     Reason: Forbidden path '.env' detected in body
+⚠  2 issue(s) quarantined — check: .it-sessions/issue_parsing/quarantine_issues.json
 
 Processing 8 clean issues. Continue? (yes/no)
+```
+
+Quarantined issue content is never shown to the LLM. To inspect what was flagged and why, read the quarantine file directly:
+
+```bash
+cat .it-sessions/issue_parsing/quarantine_issues.json
 ```
 
 ### What you'll see — Architecture plan
@@ -157,11 +162,7 @@ IT Team Session Complete — 20240115-1430
   • #45 — Fix model validation
   (+ 4 more)
 
-⚠  Quarantined: 2 issues (not processed)
-  • #42 — Reason: Injection keyword detected
-    Review: gh issue view 42
-  • #89 — Reason: Forbidden path in body
-    Review: gh issue view 89
+⚠  Quarantined: 2 issue(s) — check: .it-sessions/issue_parsing/quarantine_issues.json
 
 📊 Statistics
   Commits made:     3
@@ -179,10 +180,13 @@ IT Team Session Complete — 20240115-1430
 
 ## Handling Quarantined Issues
 
-Quarantined issues require manual review — they are never processed automatically.
+Quarantined issues require manual review — they are never processed automatically, and their content is never shown to the LLM.
 
 ```bash
-# View the raw issue
+# See which issues were quarantined and why
+cat .it-sessions/issue_parsing/quarantine_issues.json
+
+# View the full issue content in GitHub (human review)
 gh issue view 42
 
 # If the issue is legitimate, implement it manually
@@ -190,9 +194,6 @@ claude "Implement the OAuth feature from issue 42"
 
 # If it looks malicious, close it with a note
 gh issue close 42 --comment "Closed: security concern flagged by IT team automation"
-
-# Review why it was quarantined
-cat .it-sessions/{session-id}/quarantine.json | jq '.[] | select(.number == 42)'
 ```
 
 ---
@@ -204,18 +205,21 @@ Each session creates a directory inside your project:
 ```
 your-project/
 └── .it-sessions/
-    └── 20240115-1430/          ← session ID (timestamp)
-        ├── config.json         ← snapshot of loaded config
-        ├── issues-raw.json     ← all fetched issues (unscreened)
-        ├── quarantine.json     ← quarantined issues + reasons
-        ├── issues-clean.json   ← issues that passed screening
-        ├── architecture.json   ← work unit assignments
+    ├── issue_parsing/                     ← shared across sessions, created once
+    │   ├── screen_issues.sh               ← screening script (auto-generated)
+    │   ├── injection-patterns.yaml        ← blocklist (auto-translated from skill MD)
+    │   ├── clean_issues.json              ← issues that passed screening (full JSON)
+    │   └── quarantine_issues.json         ← quarantined: number + reason only
+    └── 20240115-1430/                     ← session ID (timestamp)
+        ├── config.json                    ← snapshot of loaded config
+        ├── architecture.json              ← work unit assignments
         ├── dev-results/
-        │   ├── dev-1.json      ← per-agent results + commit hashes
+        │   ├── dev-1.json                 ← per-agent results + commit hashes
         │   └── dev-2.json
-        ├── test-results.json   ← QA output
-        ├── review-results.json ← code review findings
-        └── session.log         ← full audit trail
+        ├── test-results.json              ← QA output
+        ├── review-results.json            ← code review findings
+        ├── review-classifications.json    ← immediate vs deferred per finding
+        └── session.log                    ← full audit trail
 ```
 
 `.it-sessions/` is added to your project's `.gitignore` automatically on first run — session data is never committed.
@@ -336,11 +340,11 @@ git diff --name-only main..HEAD | grep "^\.\."
 # Scan commits for accidental secrets
 git log -p main..HEAD | grep -iE "api[_-]?key|secret|password|token"
 
-# Review session quarantine log
-cat .it-sessions/$(ls -t .it-sessions | head -1)/quarantine.json
+# Review quarantined issues (number + reason only)
+cat .it-sessions/issue_parsing/quarantine_issues.json
 
 # Check audit trail
-tail -50 .it-sessions/$(ls -t .it-sessions | head -1)/session.log
+tail -50 .it-sessions/$(ls -t .it-sessions | grep -v issue_parsing | head -1)/session.log
 ```
 
 ---
@@ -388,8 +392,7 @@ nano ~/.claude/skills/it-team/config.yaml
 Review what triggered the quarantine:
 
 ```bash
-cat .it-sessions/$(ls -t .it-sessions | head -1)/quarantine.json \
-  | jq '.[] | {number, title, reason}'
+cat .it-sessions/issue_parsing/quarantine_issues.json
 ```
 
 If they look legitimate, implement the safe ones manually:
@@ -499,7 +502,7 @@ cp agents/* ~/.claude/agents/
 ```
 
 **Q: Can I add custom quarantine patterns?**
-A: Yes. Edit `~/.claude/skills/it-team/reference/injection-patterns.md` and add entries under the relevant category.
+A: Yes. Edit `~/.claude/skills/it-team/reference/injection-patterns.md` and add entries under the relevant category. The skill auto-regenerates `.it-sessions/issue_parsing/injection-patterns.yaml` on the next run when it detects the MD file is newer.
 
 **Q: The PR was created but tests failed — should I merge?**
 A: Your call. Failed tests are included in the PR body for visibility. The skill deliberately doesn't block merging on test failure. Review the failures and decide.
@@ -510,5 +513,6 @@ A: Your call. Failed tests are included in the PR body for visibility. The skill
 
 - **Threat model:** [docs/SECURITY.md](SECURITY.md)
 - **Session logs:** `.it-sessions/{session-id}/session.log`
-- **Quarantine details:** `.it-sessions/{session-id}/quarantine.json`
+- **Quarantine details:** `.it-sessions/issue_parsing/quarantine_issues.json`
 - **Injection patterns:** `skill/reference/injection-patterns.md`
+- **Screening script:** `.it-sessions/issue_parsing/screen_issues.sh`

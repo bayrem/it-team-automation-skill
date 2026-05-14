@@ -19,10 +19,10 @@ This system takes a detection-and-quarantine approach rather than trying to enfo
 
 **What that means honestly:**
 
-- Claude's built-in instructions act as the primary security layer ("paranoid mode" — agents are instructed to treat all issue content as untrusted)
-- Issues containing suspicious content (injection patterns, path traversal, shell commands) are moved to a quarantine queue and surfaced to the user — never silently dropped or auto-processed
-- The user sees exactly what was flagged and why, and decides whether to proceed
-- There are no hidden Python enforcement scripts. Security behavior is visible in the skill instructions themselves — you can read and audit `skill/SKILL.md` directly
+- A shell script (`screen_issues.sh`) runs as the first layer — before any issue content enters the LLM context. It fetches issues, pattern-matches against a blocklist, and wipes the raw data. The LLM only ever sees the pre-screened clean list and a count of quarantined items.
+- Issues containing suspicious content (injection patterns, path traversal, shell commands) are quarantined and surfaced to the user — never silently dropped or auto-processed
+- The user sees how many issues were flagged and can inspect the quarantine file directly; the LLM is never shown quarantined content
+- All security behaviour is visible and auditable: the shell script is in `.it-sessions/issue_parsing/screen_issues.sh`, the blocklist is in `skill/reference/injection-patterns.md`, and the orchestration logic is in `skill/SKILL.md`
 
 **What this approach does NOT guarantee:**
 
@@ -67,8 +67,13 @@ After the first session, your target project will contain:
 your-project/
 ├── .gitignore              ← .it-sessions/ added automatically
 ├── .it-sessions/           ← session data (git-ignored, never committed)
+│   ├── issue_parsing/      ← shared across sessions (created once)
+│   │   ├── screen_issues.sh
+│   │   ├── injection-patterns.yaml
+│   │   ├── clean_issues.json
+│   │   └── quarantine_issues.json
 │   └── 20240115-1430/      ← one directory per session
-│       ├── quarantine.json
+│       ├── dev-results/
 │       ├── session.log
 │       └── ...
 ├── src/
